@@ -1,48 +1,39 @@
-"""Slack channel ingestion via slack-sdk."""
-from slack_sdk import WebClient
-from slack_sdk.errors import SlackApiError
-from langchain_core.documents import Document
-from embeddings.chunker import recursive_chunk
-from vectorstore.pgvector_store import PGVectorStore
+"""Slack export JSON → LangChain Documents."""
+import json
+from pathlib import Path
+from langchain.schema import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from typing import List
-import os
-from dotenv import load_dotenv
+import logging
 
-load_dotenv()
+logger = logging.getLogger(__name__)
 
 
-class SlackLoader:
-    def __init__(self):
-        self.client = WebClient(token=os.getenv("SLACK_BOT_TOKEN"))
+def load_slack_export(export_dir: str | Path, channels: List[str] | None = None) -> List[Document]:
+    """Parse a Slack data export directory into Documents."""
+    export_path = Path(export_dir)
+    docs: List[Document] = []
+    channel_dirs = [d for d in export_path.iterdir() if d.is_dir()]
+    if channels:
+        channel_dirs = [d for d in channel_dirs if d.name in channels]
 
-    def load_channel(self, channel_id: str, limit: int = 200) -> List[Document]:
-        try:
-            result = self.client.conversations_history(channel=channel_id, limit=limit)
-            messages = result.get("messages", [])
-        except SlackApiError as e:
-            print(f"Slack error: {e.response['error']}")
-            return []
+    for channel in channel_dirs:
+        for json_file in sorted(channel.glob("*.json")):
+            messages = json.loads(json_file.read_text())
+            for msg in messages:
+                if msg.get("type") == "message" and "text" in msg:
+                    docs.append(Document(
+                        page_content=msg["text"],
+                        metadata={
+                            "source": f"slack/{channel.name}/{json_file.name}",
+                            "channel": channel.name,
+                            "ts": msg.get("ts", ""),
+                            "user": msg.get("user", "unknown"),
+                            "loader": "slack",
+                        }
+                    ))
 
-        docs = []
-        for msg in messages:
-            if msg.get("type") == "message" and not msg.get("subtype"):
-                docs.append(Document(
-                    page_content=msg.get("text", ""),
-                    metadata={
-                        "source": f"slack:{channel_id}",
-                        "type": "slack",
-                        "ts": msg.get("ts"),
-                        "user": msg.get("user", "unknown"),
-                    },
-                ))
-        return docs
-
-    def ingest_channel(self, channel_id: str, store: PGVectorStore = None) -> List[str]:
-        docs = self.load_channel(channel_id)
-        if not docs:
-            return []
-        chunks = recursive_chunk(docs)
-        vs = store or PGVectorStore()
-        ids = vs.add_documents(chunks)
-        print(f"Ingested {len(chunks)} chunks from slack:{channel_id}")
-        return ids
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+    chunks = splitter.split_documents(docs)
+    logger.info(f"slack_loader: {len(chunks)} chunks from {export_path}")
+    return chunks

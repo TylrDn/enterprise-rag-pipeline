@@ -1,0 +1,19 @@
+embedding:
+  backend: nim                          # nim | huggingface
+  model: nvidia/nv-embedqa-e5-v5
+  batch_size: 64
+
+chunking:
+  chunk_size: 1000
+  chunk_overlap: 200
+
+retrieval:
+  top_k: 10
+  rerank_top_n: 4
+  reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  bm25_weight: 0.4
+  dense_weight: 0.6
+
+generation:
+  model: meta/llama-3.1-70b-instruct
+  temperature: 0.0

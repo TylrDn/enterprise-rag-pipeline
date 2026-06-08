@@ -1,26 +1,29 @@
-"""Web page ingestion via httpx + BeautifulSoup."""
-import httpx
-from bs4 import BeautifulSoup
-from langchain_core.documents import Document
-from embeddings.chunker import recursive_chunk
-from vectorstore.pgvector_store import PGVectorStore
+"""Web scraper: Playwright (JS-heavy) + BeautifulSoup fallback."""
+from langchain.schema import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from typing import List
+import logging
+import asyncio
+
+logger = logging.getLogger(__name__)
 
 
-def load_url(url: str) -> List[Document]:
-    response = httpx.get(url, follow_redirects=True, timeout=30.0)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
-    for tag in soup(["script", "style", "nav", "footer", "header"]):
-        tag.decompose()
-    text = soup.get_text(separator="\n", strip=True)
-    return [Document(page_content=text, metadata={"source": url, "type": "web"})]
+async def _scrape_playwright(url: str) -> str:
+    from playwright.async_api import async_playwright
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(url, timeout=30000)
+        await page.wait_for_load_state("networkidle")
+        content = await page.inner_text("body")
+        await browser.close()
+        return content
 
 
-def ingest_url(url: str, store: PGVectorStore = None) -> List[str]:
-    docs = load_url(url)
-    chunks = recursive_chunk(docs)
-    vs = store or PGVectorStore()
-    ids = vs.add_documents(chunks)
-    print(f"Ingested {len(chunks)} chunks from {url}")
-    return ids
+def load_url(url: str, chunk_size: int = 1000, chunk_overlap: int = 150) -> List[Document]:
+    """Scrape a URL and return chunked Documents."""
+    text = asyncio.run(_scrape_playwright(url))
+    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    return splitter.create_documents(
+        [text], metadatas=[{"source": url, "loader": "web"}]
+    )

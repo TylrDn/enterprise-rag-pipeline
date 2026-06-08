@@ -1,0 +1,7 @@
+pgvector:
+  url: ${PGVECTOR_URL}
+  collection: enterprise_rag
+
+milvus:
+  uri: ${MILVUS_URI}
+  collection: enterprise_rag

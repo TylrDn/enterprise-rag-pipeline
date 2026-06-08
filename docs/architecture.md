@@ -1,52 +1,63 @@
-# Architecture — enterprise-rag-pipeline
+# enterprise-rag-pipeline — Architecture
 
-## System Overview
-Multi-source RAG pipeline with corrective retrieval loop, hallucination grounding, and RAGAS evaluation.
+## System Diagram
 
 ```mermaid
-graph TD
-    PDF[PDF Files] --> ING[Ingestion Layer]
-    SQL[SQL Tables] --> ING
-    WEB[Web URLs] --> ING
-    SLACK[Slack Channels] --> ING
-    ING --> CHUNK[Chunker]
-    CHUNK --> NIM_EMB[NIM Embedder\nnvidia/nv-embedqa-e5-v5]
-    NIM_EMB --> PG[(pgvector\nPostgres)]
-    NIM_EMB --> FAISS[(FAISS\nIn-Memory)]
+flowchart TD
+    subgraph Ingestion
+        PDF[pdf_loader.py]
+        SQL[sql_loader.py]
+        WEB[web_loader.py]
+        SLK[slack_loader.py]
+    end
 
-    USER[User Question] --> API[FastAPI :8000\nPOST /query]
-    API --> RW[query_rewriter node\nNIM LLM]
-    RW --> RET[retriever node\nHybrid Dense+BM25]
-    RET --> PG
-    RET --> FAISS
-    RET --> GRADE[grader node\nrelevance filter]
-    GRADE -->|no relevant docs| RW
-    GRADE -->|docs pass| GEN[generator node\nNIM LLM + context]
-    GEN --> HALL[hallucination_checker\nfaithfulness score]
-    HALL -->|score >= 0.6| OUT[Answer + Sources]
-    HALL -->|score < 0.6| RW
-    OUT --> API
+    subgraph Pipeline
+        EMB[embedder.py\nNIM / HuggingFace]
+        IDX[indexer.py]
+        RET[retriever.py\nBM25 + Dense + Rerank]
+        GEN[generator.py\nNIM LLM + Langfuse]
+    end
 
-    API --> LS[LangSmith Tracing]
-    RAGAS[RAGAS Eval Runner] --> PG
-    RAGAS --> LS
+    subgraph Backends
+        PGV[(pgvector)]
+        MLV[(Milvus)]
+    end
+
+    subgraph Evals
+        RGS[ragas_eval.py\nFaithfulness · Relevancy\nRecall · Precision]
+        LSM[langsmith_eval.py]
+    end
+
+    PDF & SQL & WEB & SLK --> EMB
+    EMB --> IDX
+    IDX --> PGV & MLV
+    PGV & MLV --> RET
+    RET --> GEN
+    GEN --> RGS & LSM
 ```
 
-## Corrective RAG Loop
-| Condition | Action |
-|---|---|
-| No relevant docs after grading | Rewrite query → re-retrieve |
-| Hallucination score < 0.6 | Rewrite query → re-retrieve |
-| retry_count >= 2 | Force generate with best available |
+## Key Design Decisions
 
-## Ingestion Sources
-| Source | Loader | Chunking |
+- **Swappable backends:** `backends.yaml` controls pgvector vs Milvus — no code changes needed
+- **Hybrid retrieval:** BM25 (40%) + dense (60%) ensemble, reranked by cross-encoder
+- **NIM embedding:** `nvidia/nv-embedqa-e5-v5` via OpenAI-compatible API
+- **RAGAS eval:** 4 core metrics tracked per pipeline config change — `faithfulness`, `answer_relevancy`, `context_recall`, `context_precision`
+- **Langfuse tracing:** Every LLM call is traced for latency and token cost
+- **NeMo Retriever:** Drop-in replacement for `retriever.py` layer when scaling to enterprise
+
+## Component Map
+
+| Layer | File | Responsibility |
 |---|---|---|
-| PDF | pdfplumber / unstructured | recursive 512/64 |
-| SQL | SQLAlchemy row→doc | none (row = chunk) |
-| Web | httpx + BeautifulSoup | recursive 512/64 |
-| Slack | slack-sdk messages | recursive 512/64 |
-
-## Eval Stack
-- **RAGAS** — faithfulness, answer relevancy, context precision, context recall
-- **LangSmith** — experiment tracking, dataset versioning, regression CI
+| Ingestion | `ingestion/pdf_loader.py` | PyMuPDF → chunked Documents |
+| Ingestion | `ingestion/sql_loader.py` | Schema-aware table → Documents |
+| Ingestion | `ingestion/web_loader.py` | Playwright scraper → Documents |
+| Ingestion | `ingestion/slack_loader.py` | Slack export JSON → Documents |
+| Pipeline | `pipeline/embedder.py` | NIM or HuggingFace embeddings |
+| Pipeline | `pipeline/indexer.py` | Upsert to vector backend |
+| Pipeline | `pipeline/retriever.py` | BM25 + dense hybrid + rerank |
+| Pipeline | `pipeline/generator.py` | NIM LLM + Langfuse tracing |
+| Backends | `backends/pgvector_backend.py` | pgvector CRUD |
+| Backends | `backends/milvus_backend.py` | Milvus CRUD |
+| Evals | `evals/ragas_eval.py` | RAGAS 4-metric eval + JSON report |
+| Evals | `evals/langsmith_eval.py` | LangSmith dataset + evaluator |

@@ -1,16 +1,14 @@
 name: CI
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+on: [push, pull_request]
 jobs:
-  test:
+  lint-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: pip install pytest pytest-asyncio httpx fastapi pydantic python-dotenv openai langchain langchain-openai langgraph langchain-core langchain-text-splitters langchain-community rank-bm25
+        with: { python-version: "3.11" }
+      - run: pip install -r requirements.txt
+      - run: pip install ruff mypy pytest
+      - run: ruff check .
+      - run: mypy . --ignore-missing-imports
       - run: pytest tests/ -v
