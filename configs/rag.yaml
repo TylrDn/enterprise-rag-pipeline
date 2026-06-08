@@ -1,0 +1,29 @@
+embedding:
+  model: nvidia/nv-embedqa-e5-v5
+  base_url: https://integrate.api.nvidia.com/v1
+  dimensions: 1024
+  batch_size: 32
+
+chat:
+  model: meta/llama3-70b-instruct
+  base_url: https://integrate.api.nvidia.com/v1
+  temperature: 0.1
+  max_tokens: 1024
+
+retriever:
+  top_k: 6
+  rerank: true
+  hybrid_alpha: 0.7   # 0=BM25 only, 1=dense only
+
+chunking:
+  chunk_size: 512
+  chunk_overlap: 64
+  splitter: recursive
+
+pgvector:
+  collection: documents
+  distance_strategy: cosine
+
+grader:
+  relevance_threshold: 0.7
+  hallucination_threshold: 0.6

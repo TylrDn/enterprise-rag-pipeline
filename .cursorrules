@@ -1,0 +1,37 @@
+# Cursor Rules — enterprise-rag-pipeline
+
+## Project Context
+This is a production-grade multi-source RAG pipeline built with LangGraph, LangChain, NVIDIA NIM, and pgvector.
+Always maintain the corrective RAG loop pattern: rewrite_query → retrieve → grade → generate → hallucination_check.
+
+## Architecture Rules
+- ALL LLM calls go through NIM endpoint (base_url from .env NIM_BASE_URL)
+- ALL embeddings use NIMEmbedder from embeddings/nim_embedder.py
+- State MUST flow through RAGState TypedDict defined in orchestrator/state.py
+- New graph nodes go in orchestrator/nodes/ and MUST accept + return RAGState
+- New ingestion sources go in ingestion/ and MUST call PGVectorStore().add_documents()
+
+## Code Conventions
+- Python 3.11+, type hints everywhere
+- Pydantic v2 for all API schemas
+- dotenv load_dotenv() at top of every module that reads env vars
+- No hardcoded API keys, model names, or URLs — always from os.getenv()
+- All nodes return full state dict: {**state, "new_key": value}
+
+## File Structure
+- orchestrator/nodes/ — one file per graph node
+- ingestion/ — one file per source type (pdf, sql, web, slack)
+- embeddings/ — NIM client + chunking only
+- vectorstore/ — pgvector and FAISS wrappers only
+- tests/ — mirror src structure, mock all external calls
+
+## Testing
+- Mock all OpenAI/NIM API calls with unittest.mock
+- Mock pgvector/FAISS with in-memory fakes
+- Every node must have at least one unit test in tests/
+
+## Do Not
+- Do not import from api/ into orchestrator/ or ingestion/
+- Do not make real API calls in tests
+- Do not commit .env — only .env.template
+- Do not use sync SQLAlchemy in async FastAPI routes

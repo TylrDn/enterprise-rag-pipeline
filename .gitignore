@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.env
+*.log
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.idea/
+.vscode/
+chroma_db/
+*.faiss
+*.pkl
