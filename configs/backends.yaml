@@ -1,7 +1,15 @@
+# Vector store backend configuration
+# Switch between pgvector and milvus without code changes
+
+active_backend: pgvector  # options: pgvector | milvus
+
 pgvector:
-  url: ${PGVECTOR_URL}
-  collection: enterprise_rag
+  connection: postgresql+psycopg://rag:rag@localhost:5432/ragdb
+  collection: rag_docs
 
 milvus:
-  uri: ${MILVUS_URI}
-  collection: enterprise_rag
+  uri: http://localhost:19530
+  collection: rag_docs
+  index_type: IVF_FLAT
+  metric_type: IP
+  nlist: 1024

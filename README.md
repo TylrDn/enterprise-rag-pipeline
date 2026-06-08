@@ -1,118 +1,115 @@
-# Enterprise RAG Pipeline
+# enterprise-rag-pipeline
 
-A production-grade Retrieval-Augmented Generation (RAG) system built on **NVIDIA NIM**, **pgvector**, and **LangChain**.
+[![CI](https://github.com/TylrDn/enterprise-rag-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/TylrDn/enterprise-rag-pipeline/actions/workflows/ci.yml)
+
+Production-grade multi-source RAG pipeline with **pgvector** and **Milvus** vector backends, **hybrid BM25 + dense retrieval**, cross-encoder reranking, and **RAGAS + LangSmith** evaluation harnesses — built on NVIDIA NIM embeddings and generation.
 
 ## Architecture
 
 ```
-Documents
-    │
-    ▼
-[ Indexer ] ── RecursiveCharacterTextSplitter ── SHA-256 dedup ── batch upsert
-    │
-    ▼
-[ PgVectorBackend ]  (cosine, JSONB metadata, langchain-postgres)
-    │
-    ▼
-[ HybridRetriever ]
-    ├── BM25Retriever (sparse / lexical)
-    └── Dense VectorStoreRetriever (semantic)
-           └── EnsembleRetriever (RRF, alpha=0.7)
-                  └── CrossEncoderReranker (ms-marco-MiniLM-L-6-v2)
-    │
-    ▼
-[ Generator ]  ── NVIDIA NIM (meta/llama3-70b-instruct)
-    ├── Grounding guard (refuses on empty context)
-    └── Hallucination check (secondary LLM grading call)
-    │
-    ▼
-[ FastAPI ]  POST /ingest  |  POST /query  |  GET /query/stream  |  GET /health
+User Query
+    ↓
+FastAPI /query
+    ↓
+RAGGenerator
+    ↓
+HybridRetriever (BM25 + Dense + Rerank)
+    ↓
+[pgvector | Milvus]
+    ↓
+NVIDIA NIM (generation + embeddings)
 ```
+
+See [docs/architecture.md](docs/architecture.md) for the full Mermaid diagram.
 
 ## Quickstart
 
-### 1. Clone & configure
 ```bash
-git clone https://github.com/TylrDn/enterprise-rag-pipeline.git
-cd enterprise-rag-pipeline
 cp .env.template .env
-# Fill in NVIDIA_API_KEY and PGVECTOR_URL in .env
+# Add NVIDIA_API_KEY to .env
+
+pip install -r requirements.txt
+
+# Start Postgres with pgvector
+cd deploy && docker-compose up postgres -d
+
+# Run the API
+uvicorn api.server:app --reload --port 8081
 ```
 
-### 2. Run with Docker Compose
+## Docker
+
 ```bash
 cd deploy
-docker compose up --build
-```
-The API will be available at `http://localhost:8080`. Interactive docs at `/docs`.
-
-### 3. Local development
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn api.server:app --reload --port 8080
+docker-compose up --build
 ```
 
-## API Reference
+## Ingestion
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/ingest` | Chunk, embed, and store documents |
-| `POST` | `/query` | Hybrid retrieve + grounded generation |
-| `GET` | `/query/stream` | SSE streaming answer |
-| `GET` | `/health` | Liveness + backend readiness |
+```python
+from ingestion.pdf_loader import PDFLoader
+from pipeline.embedder import Embedder
+from pipeline.indexer import Indexer
 
-### Example: Ingest
-```bash
-curl -X POST http://localhost:8080/ingest \
-  -H 'Content-Type: application/json' \
-  -d '{"texts": ["NVIDIA NIM provides optimised inference."], "metadatas": [{"source": "docs.pdf"}]}'
+loader = PDFLoader()
+docs = loader.load_directory("./data/pdfs")
+
+embedder = Embedder()
+indexer = Indexer(backend="pgvector")
+indexer.upsert(docs, embedder.as_langchain())
 ```
 
-### Example: Query
-```bash
-curl -X POST http://localhost:8080/query \
-  -H 'Content-Type: application/json' \
-  -d '{"question": "What does NVIDIA NIM do?"}'
+## Retrieval & Generation
+
+```python
+from pipeline.retriever import HybridRetriever
+from pipeline.generator import RAGGenerator
+
+retriever = HybridRetriever(dense_retriever=indexer.get_retriever(embedder.as_langchain()), corpus_docs=docs)
+generator = RAGGenerator(retriever)
+result = generator.generate_with_sources("What is the refund policy?")
+print(result["answer"])
+print(result["sources"])
 ```
 
-## Configuration
-
-| File | Purpose |
-|------|---------|
-| `configs/rag.yaml` | Embedding model, chat model, retriever settings, grader thresholds |
-| `configs/pipeline.yaml` | Chunk size, overlap, batch size |
-| `configs/backends.yaml` | pgvector and Milvus connection config |
-| `.env` | Secrets: `NVIDIA_API_KEY`, `PGVECTOR_URL`, `LANGFUSE_*` |
-
-## Project Structure
-
-```
-enterprise-rag-pipeline/
-├── api/               FastAPI server
-├── backends/          Vector store backends (pgvector)
-├── configs/           YAML configuration
-├── deploy/            Dockerfile + docker-compose
-├── evals/             RAGAS evaluation harness
-├── orchestrator/      End-to-end RAGPipeline wrapper
-├── pipeline/          Core: embedder, indexer, retriever, generator
-├── tests/             Pytest suite (mocked, no live services needed)
-└── .github/workflows/ CI (pytest + coverage on Python 3.11 & 3.12)
-```
-
-## Running Tests
+## Evaluation
 
 ```bash
-pytest tests/ -v --cov=pipeline --cov=backends --cov=api --cov=orchestrator
+python -m evals.ragas_eval
+python -m evals.langsmith_eval
 ```
+
+## Key Components
+
+| Module | Description |
+|---|---|
+| `ingestion/pdf_loader.py` | PyMuPDF + RecursiveCharacterTextSplitter |
+| `ingestion/sql_loader.py` | Schema-aware SQL table → Document |
+| `ingestion/web_loader.py` | httpx + BeautifulSoup scraper |
+| `ingestion/slack_loader.py` | Slack export JSON → Documents |
+| `pipeline/embedder.py` | NIM embedding wrapper |
+| `pipeline/retriever.py` | BM25 + dense hybrid + cross-encoder rerank |
+| `pipeline/generator.py` | NIM-backed RAG generation chain |
+| `backends/pgvector_backend.py` | Postgres pgvector store |
+| `backends/milvus_backend.py` | Milvus vector store |
+| `evals/ragas_eval.py` | RAGAS faithfulness/relevancy/recall eval |
+| `evals/langsmith_eval.py` | LangSmith dataset + evaluator harness |
 
 ## Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `NVIDIA_API_KEY` | Yes | NVIDIA NIM API key |
-| `PGVECTOR_URL` | Yes | SQLAlchemy async connection string |
-| `EMBEDDING_BACKEND` | No | `nim` (default) or `huggingface` |
-| `RERANKER_MODEL` | No | HuggingFace cross-encoder model name |
-| `LANGFUSE_PUBLIC_KEY` | No | Langfuse observability |
-| `LANGFUSE_SECRET_KEY` | No | Langfuse observability |
+| Variable | Description |
+|---|---|
+| `NVIDIA_API_KEY` | NVIDIA NIM API key |
+| `NIM_BASE_URL` | NIM endpoint (default: build.nvidia.com) |
+| `VECTOR_BACKEND` | `pgvector` or `milvus` |
+| `PGVECTOR_CONNECTION` | SQLAlchemy connection string |
+| `LANGSMITH_API_KEY` | LangSmith tracing + evals |
+
+## Cross-Repo Integration
+
+- [`nvidia-nim-agent-toolkit`](https://github.com/TylrDn/nvidia-nim-agent-toolkit) — DocAgent uses this pipeline as its RAG backend
+- [`agentic-guardrails-eval`](https://github.com/TylrDn/agentic-guardrails-eval) — safety eval suite can target this pipeline's `/query` endpoint
+
+## Topics
+
+`rag` `retrieval-augmented-generation` `langchain` `pgvector` `milvus` `ragas` `langsmith` `nemo-retriever` `python` `enterprise-ai`

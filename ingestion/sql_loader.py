@@ -1,34 +1,54 @@
-"""Schema-aware SQL table → LangChain Document converter."""
+"""Schema-aware SQL table → Document converter."""
+from __future__ import annotations
+
+import os
+
+from langchain_core.documents import Document
 from sqlalchemy import create_engine, inspect, text
-from langchain.schema import Document
-from typing import List
-import logging
 
-logger = logging.getLogger(__name__)
+DB_URL = os.getenv("DATABASE_URL", "sqlite:///./demo.db")
 
 
-def load_table(db_url: str, table_name: str, columns: List[str] | None = None) -> List[Document]:
-    """Convert each row of a SQL table into a Document with schema metadata."""
-    engine = create_engine(db_url)
-    inspector = inspect(engine)
-    schema_info = {col["name"]: col["type"] for col in inspector.get_columns(table_name)}
+class SQLLoader:
+    """Convert SQL tables into LangChain Documents for RAG ingestion."""
 
-    col_clause = ", ".join(columns) if columns else "*"
-    with engine.connect() as conn:
-        rows = conn.execute(text(f"SELECT {col_clause} FROM {table_name}")).mappings().all()
+    def __init__(self, db_url: str = DB_URL, rows_per_chunk: int = 50) -> None:
+        self.engine = create_engine(db_url)
+        self.rows_per_chunk = rows_per_chunk
 
-    docs: List[Document] = []
-    for i, row in enumerate(rows):
-        content = "\n".join(f"{k}: {v}" for k, v in row.items())
-        docs.append(Document(
-            page_content=content,
-            metadata={
-                "source": f"{db_url}/{table_name}",
-                "row_index": i,
-                "table": table_name,
-                "schema": str(schema_info),
-                "loader": "sql",
-            }
-        ))
-    logger.info(f"sql_loader: {len(docs)} docs from {table_name}")
-    return docs
+    def _get_schema(self, table_name: str) -> str:
+        insp = inspect(self.engine)
+        cols = insp.get_columns(table_name)
+        return ", ".join(f"{c['name']} ({c['type']})" for c in cols)
+
+    def load_table(self, table_name: str) -> list[Document]:
+        schema = self._get_schema(table_name)
+        docs: list[Document] = []
+        with self.engine.connect() as conn:
+            result = conn.execute(text(f"SELECT * FROM {table_name}"))
+            keys = list(result.keys())
+            batch: list[str] = []
+            chunk_idx = 0
+            for row in result:
+                row_text = " | ".join(f"{k}: {v}" for k, v in zip(keys, row))
+                batch.append(row_text)
+                if len(batch) >= self.rows_per_chunk:
+                    docs.append(Document(
+                        page_content="\n".join(batch),
+                        metadata={"source": f"sql:{table_name}", "chunk": chunk_idx, "schema": schema},
+                    ))
+                    batch = []
+                    chunk_idx += 1
+            if batch:
+                docs.append(Document(
+                    page_content="\n".join(batch),
+                    metadata={"source": f"sql:{table_name}", "chunk": chunk_idx, "schema": schema},
+                ))
+        return docs
+
+    def load_all_tables(self) -> list[Document]:
+        insp = inspect(self.engine)
+        docs: list[Document] = []
+        for table in insp.get_table_names():
+            docs.extend(self.load_table(table))
+        return docs

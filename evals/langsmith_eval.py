@@ -1,37 +1,55 @@
-"""LangSmith evaluation harness — dataset upload + evaluator config."""
-from langsmith import Client
-from langsmith.evaluation import evaluate as ls_evaluate
-from typing import List, Dict, Any, Callable
+"""LangSmith evaluation harness for the RAG pipeline."""
+from __future__ import annotations
+
 import os
+from typing import Any
+
+from langsmith import Client
+from langsmith.evaluation import evaluate
+from langsmith.schemas import Run, Example
+
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY", "")
+DATASET_NAME = os.getenv("LANGSMITH_DATASET", "rag-pipeline-eval")
+
+DEMO_QA = [
+    {"input": {"question": "What is RAG?"}, "output": {"answer": "retrieval"}},
+    {"input": {"question": "What is pgvector?"}, "output": {"answer": "postgres"}},
+]
 
 
-def upload_dataset(
-    name: str,
-    examples: List[Dict[str, Any]],
-    description: str = "",
-) -> str:
-    """Upload QA pairs to LangSmith as a named dataset. Returns dataset ID."""
-    client = Client(api_key=os.environ["LANGSMITH_API_KEY"])
-    dataset = client.create_dataset(dataset_name=name, description=description)
-    client.create_examples(
-        inputs=[{"question": e["question"]} for e in examples],
-        outputs=[{"answer": e["answer"]} for e in examples],
-        dataset_id=dataset.id,
+def seed_dataset(client: Client) -> None:
+    existing = {d.name for d in client.list_datasets()}
+    if DATASET_NAME in existing:
+        return
+    ds = client.create_dataset(DATASET_NAME)
+    for ex in DEMO_QA:
+        client.create_example(inputs=ex["input"], outputs=ex["output"], dataset_id=ds.id)
+
+
+def rag_target(inputs: dict[str, Any]) -> dict[str, Any]:
+    # Wire your pipeline here
+    return {"answer": "placeholder"}
+
+
+def relevance_evaluator(run: Run, example: Example) -> dict:
+    pred = (run.outputs or {}).get("answer", "")
+    gt = (example.outputs or {}).get("answer", "")
+    score = 1 if gt.lower() in pred.lower() else 0
+    return {"key": "relevance", "score": score}
+
+
+def run_eval() -> None:
+    client = Client(api_key=LANGSMITH_API_KEY)
+    seed_dataset(client)
+    results = evaluate(
+        rag_target,
+        data=DATASET_NAME,
+        evaluators=[relevance_evaluator],
+        experiment_prefix="rag-pipeline",
     )
-    print(f"Uploaded {len(examples)} examples to dataset '{name}' ({dataset.id})")
-    return str(dataset.id)
+    for r in results:
+        print(r)
 
 
-def run_langsmith_eval(
-    target_fn: Callable,
-    dataset_name: str,
-    experiment_prefix: str = "rag-eval",
-) -> Dict[str, Any]:
-    """Run LangSmith evaluation against an existing dataset."""
-    results = ls_evaluate(
-        target_fn,
-        data=dataset_name,
-        experiment_prefix=experiment_prefix,
-    )
-    print(f"LangSmith eval complete: {results}")
-    return results
+if __name__ == "__main__":
+    run_eval()

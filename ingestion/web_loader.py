@@ -1,29 +1,45 @@
-"""Web scraper: Playwright (JS-heavy) + BeautifulSoup fallback."""
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from typing import List
-import logging
-import asyncio
+"""Web scraper using httpx + BeautifulSoup with recursive site crawling."""
+from __future__ import annotations
 
-logger = logging.getLogger(__name__)
+from urllib.parse import urljoin, urlparse
 
-
-async def _scrape_playwright(url: str) -> str:
-    from playwright.async_api import async_playwright
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        await page.goto(url, timeout=30000)
-        await page.wait_for_load_state("networkidle")
-        content = await page.inner_text("body")
-        await browser.close()
-        return content
+import httpx
+from bs4 import BeautifulSoup
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
-def load_url(url: str, chunk_size: int = 1000, chunk_overlap: int = 150) -> List[Document]:
-    """Scrape a URL and return chunked Documents."""
-    text = asyncio.run(_scrape_playwright(url))
-    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    return splitter.create_documents(
-        [text], metadatas=[{"source": url, "loader": "web"}]
-    )
+class WebLoader:
+    """Scrape one or more URLs into LangChain Documents."""
+
+    def __init__(self, chunk_size: int = 512, chunk_overlap: int = 64, max_depth: int = 1) -> None:
+        self.splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        self.max_depth = max_depth
+        self._visited: set[str] = set()
+
+    def _fetch(self, url: str) -> str:
+        try:
+            r = httpx.get(url, timeout=15, follow_redirects=True)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "html.parser")
+            for tag in soup(["script", "style", "nav", "footer", "header"]):
+                tag.decompose()
+            return soup.get_text(separator=" ", strip=True)
+        except Exception:
+            return ""
+
+    def load(self, url: str, depth: int = 0) -> list[Document]:
+        if url in self._visited or depth > self.max_depth:
+            return []
+        self._visited.add(url)
+        text = self._fetch(url)
+        if not text:
+            return []
+        raw = Document(page_content=text, metadata={"source": url, "depth": depth})
+        return self.splitter.split_documents([raw])
+
+    def load_urls(self, urls: list[str]) -> list[Document]:
+        docs: list[Document] = []
+        for url in urls:
+            docs.extend(self.load(url))
+        return docs

@@ -1,6 +1,6 @@
-"""RAG pipeline components."""
+from pipeline.embedder import Embedder
+from pipeline.indexer import Indexer
+from pipeline.retriever import HybridRetriever
+from pipeline.generator import RAGGenerator
 
-from pipeline.embedder import get_embedder
-from pipeline.indexer import Indexer, IndexResult
-
-__all__ = ["get_embedder", "Indexer", "IndexResult"]
+__all__ = ["Embedder", "Indexer", "HybridRetriever", "RAGGenerator"]

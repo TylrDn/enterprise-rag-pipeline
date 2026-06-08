@@ -1,120 +1,71 @@
-"""RAGAS-based evaluation harness for the RAG pipeline.
-
-Measures:
-  - faithfulness      : are answers grounded in retrieved context?
-  - answer_relevancy  : does the answer address the question?
-  - context_precision : are retrieved chunks relevant to the question?
-  - context_recall    : are all necessary chunks retrieved?
-
-Usage::
-
-    from evals.ragas_eval import run_eval
-    results = run_eval(pipeline, eval_dataset)
-    print(results.to_dict())
-"""
-
+"""RAGAS evaluation harness — faithfulness, answer relevancy, context recall."""
 from __future__ import annotations
 
-import logging
-from dataclasses import dataclass
-from typing import List
+import os
+from pathlib import Path
+from typing import Any
 
-logger = logging.getLogger(__name__)
+from datasets import Dataset
+from ragas import evaluate
+from ragas.metrics import (
+    answer_relevancy,
+    context_precision,
+    context_recall,
+    faithfulness,
+)
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
-
-@dataclass
-class EvalSample:
-    """A single evaluation sample."""
-    question: str
-    ground_truth: str
-    reference_contexts: List[str]
-
-
-@dataclass
-class EvalResult:
-    """Aggregated RAGAS evaluation results."""
-    faithfulness: float
-    answer_relevancy: float
-    context_precision: float
-    context_recall: float
-    n_samples: int
-
-    def to_dict(self) -> dict:
-        return {
-            "faithfulness": round(self.faithfulness, 4),
-            "answer_relevancy": round(self.answer_relevancy, 4),
-            "context_precision": round(self.context_precision, 4),
-            "context_recall": round(self.context_recall, 4),
-            "n_samples": self.n_samples,
-        }
-
-    def __str__(self) -> str:
-        d = self.to_dict()
-        return (
-            f"EvalResult(n={d['n_samples']}) | "
-            f"faithfulness={d['faithfulness']} | "
-            f"answer_relevancy={d['answer_relevancy']} | "
-            f"context_precision={d['context_precision']} | "
-            f"context_recall={d['context_recall']}"
-        )
+NIM_BASE_URL = os.getenv("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+NIM_API_KEY = os.getenv("NVIDIA_API_KEY", "")
 
 
-def run_eval(
-    pipeline,
-    samples: List[EvalSample],
-    langfuse_trace: bool = False,
-) -> EvalResult:
-    """Run RAGAS metrics over a list of EvalSamples.
-
-    Args:
-        pipeline:       A RAGPipeline instance.
-        samples:        List of EvalSample with questions, ground truth, and contexts.
-        langfuse_trace: If True, log each sample to Langfuse for inspection.
-
-    Returns:
-        EvalResult with averaged metric scores.
+def build_ragas_dataset(qa_pairs: list[dict], pipeline) -> Dataset:
     """
-    try:
-        from ragas import evaluate
-        from ragas.metrics import (
-            answer_relevancy,
-            context_precision,
-            context_recall,
-            faithfulness,
-        )
-        from datasets import Dataset
-    except ImportError as e:
-        raise ImportError(
-            "ragas and datasets are required for evaluation. "
-            "Install with: pip install ragas datasets"
-        ) from e
-
+    qa_pairs: [{"question": ..., "ground_truth": ...}, ...]
+    pipeline: object with .generate_with_sources(query) -> {"answer": ..., "sources": [...]}
+    """
     rows = []
-    for sample in samples:
-        result = pipeline.query(sample.question)
+    for pair in qa_pairs:
+        q = pair["question"]
+        result = pipeline.generate_with_sources(q)
         rows.append({
-            "question": sample.question,
-            "answer": result.answer,
-            "contexts": sample.reference_contexts,
-            "ground_truth": sample.ground_truth,
+            "question": q,
+            "answer": result["answer"],
+            "contexts": result.get("contexts", [result["answer"]]),
+            "ground_truth": pair["ground_truth"],
         })
-        if langfuse_trace:
-            logger.info(
-                "[RAGAS] question=%s | grounded=%s",
-                sample.question[:60],
-                result.grounded,
-            )
+    return Dataset.from_list(rows)
 
-    dataset = Dataset.from_list(rows)
-    scores = evaluate(
+
+def run_ragas_eval(dataset: Dataset, output_path: str = "evals/reports/ragas_results.json") -> dict[str, float]:
+    llm = ChatOpenAI(
+        model="meta/llama-3.1-70b-instruct",
+        openai_api_base=NIM_BASE_URL,
+        openai_api_key=NIM_API_KEY,
+        temperature=0.0,
+    )
+    embeddings = OpenAIEmbeddings(
+        model="nvidia/nv-embedqa-e5-v5",
+        openai_api_base=NIM_BASE_URL,
+        openai_api_key=NIM_API_KEY,
+    )
+
+    result = evaluate(
         dataset,
-        metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
+        metrics=[faithfulness, answer_relevancy, context_recall, context_precision],
+        llm=llm,
+        embeddings=embeddings,
     )
 
-    return EvalResult(
-        faithfulness=scores["faithfulness"],
-        answer_relevancy=scores["answer_relevancy"],
-        context_precision=scores["context_precision"],
-        context_recall=scores["context_recall"],
-        n_samples=len(samples),
-    )
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    result.to_pandas().to_json(output_path, orient="records", indent=2)
+    print(f"RAGAS results saved to {output_path}")
+    print(result)
+    return dict(result)
+
+
+if __name__ == "__main__":
+    from evals.datasets.sample_qa import QA_PAIRS
+    from pipeline.generator import RAGGenerator
+    # NOTE: Requires a running retriever — wire in your pipeline here
+    print("Run via: python -m evals.ragas_eval after wiring a retriever.")

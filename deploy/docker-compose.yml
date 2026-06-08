@@ -5,36 +5,52 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    image: enterprise-rag-pipeline:latest
+    container_name: rag-api
     ports:
-      - "8080:8080"
-    env_file:
-      - ../.env
+      - "8081:8081"
+    environment:
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NIM_BASE_URL=${NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - VECTOR_BACKEND=${VECTOR_BACKEND:-pgvector}
+      - PGVECTOR_CONNECTION=postgresql+psycopg://rag:rag@postgres:5432/ragdb
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
     depends_on:
-      pgvector:
+      postgres:
         condition: service_healthy
-    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+    restart: unless-stopped
 
-  pgvector:
+  postgres:
     image: pgvector/pgvector:pg16
+    container_name: postgres-rag
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-rag}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ragpass}
-      POSTGRES_DB: ${POSTGRES_DB:-rag_db}
-    volumes:
-      - pgvector_data:/var/lib/postgresql/data
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+      POSTGRES_DB: ragdb
     ports:
       - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag}"]
+      test: ["CMD-SHELL", "pg_isready -U rag -d ragdb"]
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
+
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    container_name: milvus-rag
+    ports:
+      - "19530:19530"
+    environment:
+      - ETCD_USE_EMBED=true
+      - COMMON_STORAGETYPE=local
+    profiles: ["milvus"]
 
 volumes:
-  pgvector_data:
+  pgdata:
