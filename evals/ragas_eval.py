@@ -1,39 +1,120 @@
-"""RAGAS evaluation: faithfulness, answer_relevancy, context_recall, context_precision."""
-from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevancy, context_recall, context_precision
-from datasets import Dataset
-from typing import List, Dict, Any
-import json
-import pathlib
-import datetime
+"""RAGAS-based evaluation harness for the RAG pipeline.
+
+Measures:
+  - faithfulness      : are answers grounded in retrieved context?
+  - answer_relevancy  : does the answer address the question?
+  - context_precision : are retrieved chunks relevant to the question?
+  - context_recall    : are all necessary chunks retrieved?
+
+Usage::
+
+    from evals.ragas_eval import run_eval
+    results = run_eval(pipeline, eval_dataset)
+    print(results.to_dict())
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import List
+
+logger = logging.getLogger(__name__)
 
 
-def run_ragas_eval(
-    questions: List[str],
-    answers: List[str],
-    contexts: List[List[str]],
-    ground_truths: List[str],
-    report_dir: str = "evals/reports",
-) -> Dict[str, Any]:
-    """Run RAGAS evaluation suite and write JSON report."""
-    dataset = Dataset.from_dict({
-        "question": questions,
-        "answer": answers,
-        "contexts": contexts,
-        "ground_truth": ground_truths,
-    })
-    result = evaluate(
+@dataclass
+class EvalSample:
+    """A single evaluation sample."""
+    question: str
+    ground_truth: str
+    reference_contexts: List[str]
+
+
+@dataclass
+class EvalResult:
+    """Aggregated RAGAS evaluation results."""
+    faithfulness: float
+    answer_relevancy: float
+    context_precision: float
+    context_recall: float
+    n_samples: int
+
+    def to_dict(self) -> dict:
+        return {
+            "faithfulness": round(self.faithfulness, 4),
+            "answer_relevancy": round(self.answer_relevancy, 4),
+            "context_precision": round(self.context_precision, 4),
+            "context_recall": round(self.context_recall, 4),
+            "n_samples": self.n_samples,
+        }
+
+    def __str__(self) -> str:
+        d = self.to_dict()
+        return (
+            f"EvalResult(n={d['n_samples']}) | "
+            f"faithfulness={d['faithfulness']} | "
+            f"answer_relevancy={d['answer_relevancy']} | "
+            f"context_precision={d['context_precision']} | "
+            f"context_recall={d['context_recall']}"
+        )
+
+
+def run_eval(
+    pipeline,
+    samples: List[EvalSample],
+    langfuse_trace: bool = False,
+) -> EvalResult:
+    """Run RAGAS metrics over a list of EvalSamples.
+
+    Args:
+        pipeline:       A RAGPipeline instance.
+        samples:        List of EvalSample with questions, ground truth, and contexts.
+        langfuse_trace: If True, log each sample to Langfuse for inspection.
+
+    Returns:
+        EvalResult with averaged metric scores.
+    """
+    try:
+        from ragas import evaluate
+        from ragas.metrics import (
+            answer_relevancy,
+            context_precision,
+            context_recall,
+            faithfulness,
+        )
+        from datasets import Dataset
+    except ImportError as e:
+        raise ImportError(
+            "ragas and datasets are required for evaluation. "
+            "Install with: pip install ragas datasets"
+        ) from e
+
+    rows = []
+    for sample in samples:
+        result = pipeline.query(sample.question)
+        rows.append({
+            "question": sample.question,
+            "answer": result.answer,
+            "contexts": sample.reference_contexts,
+            "ground_truth": sample.ground_truth,
+        })
+        if langfuse_trace:
+            logger.info(
+                "[RAGAS] question=%s | grounded=%s",
+                sample.question[:60],
+                result.grounded,
+            )
+
+    dataset = Dataset.from_list(rows)
+    scores = evaluate(
         dataset,
-        metrics=[faithfulness, answer_relevancy, context_recall, context_precision],
+        metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
     )
-    scores = result.to_pandas().mean().to_dict()
 
-    pathlib.Path(report_dir).mkdir(parents=True, exist_ok=True)
-    ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    report_path = f"{report_dir}/ragas_{ts}.json"
-    with open(report_path, "w") as f:
-        json.dump({"scores": scores, "timestamp": ts}, f, indent=2)
-
-    print(f"RAGAS scores: {scores}")
-    print(f"Report saved: {report_path}")
-    return scores
+    return EvalResult(
+        faithfulness=scores["faithfulness"],
+        answer_relevancy=scores["answer_relevancy"],
+        context_precision=scores["context_precision"],
+        context_recall=scores["context_recall"],
+        n_samples=len(samples),
+    )

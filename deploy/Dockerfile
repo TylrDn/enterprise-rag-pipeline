@@ -1,8 +1,34 @@
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1
+# -----------------------------------------------------------------
+# Enterprise RAG Pipeline — Production Dockerfile
+# Multi-stage build: deps layer cached separately from app code.
+# -----------------------------------------------------------------
+
+FROM python:3.11-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
 WORKDIR /app
-RUN apt-get update && apt-get install -y libpq-dev gcc curl && rm -rf /var/lib/apt/lists/*
+
+# ---- deps stage ----
+FROM base AS deps
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# ---- runtime stage ----
+FROM deps AS runtime
 COPY . .
-EXPOSE 8000
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Non-root user for security
+RUN addgroup --system rag && adduser --system --ingroup rag rag
+USER rag
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+
+CMD ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]
