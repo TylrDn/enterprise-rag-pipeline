@@ -1,37 +1,261 @@
-# Cursor Rules — enterprise-rag-pipeline
+# enterprise-rag-pipeline — Cursor Rules
 
-## Project Context
-This is a production-grade multi-source RAG pipeline built with LangGraph, LangChain, NVIDIA NIM, and pgvector.
-Always maintain the corrective RAG loop pattern: rewrite_query → retrieve → grade → generate → hallucination_check.
+## Project Identity
 
-## Architecture Rules
-- ALL LLM calls go through NIM endpoint (base_url from .env NIM_BASE_URL)
-- ALL embeddings use NIMEmbedder from embeddings/nim_embedder.py
-- State MUST flow through RAGState TypedDict defined in orchestrator/state.py
-- New graph nodes go in orchestrator/nodes/ and MUST accept + return RAGState
-- New ingestion sources go in ingestion/ and MUST call PGVectorStore().add_documents()
+`enterprise-rag-pipeline` is the NVIDIA SA production-grade Retrieval-Augmented Generation reference implementation. It ingests documents from PDF, Slack, web, and SQL sources; embeds them with NIM embedding models; stores vectors in pgvector, Milvus, or FAISS; and serves grounded answers through a Corrective RAG (CRAG) LangGraph orchestrator. This repo integrates with `nvidia-nim-agent-toolkit` (upstream NIM patterns) and serves as the RAG backbone for `multi-agent-reference-architecture`. Evaluation is provided via RAGAS and LangSmith.
 
-## Code Conventions
-- Python 3.11+, type hints everywhere
-- Pydantic v2 for all API schemas
-- dotenv load_dotenv() at top of every module that reads env vars
-- No hardcoded API keys, model names, or URLs — always from os.getenv()
-- All nodes return full state dict: {**state, "new_key": value}
+## Tech Stack
 
-## File Structure
-- orchestrator/nodes/ — one file per graph node
-- ingestion/ — one file per source type (pdf, sql, web, slack)
-- embeddings/ — NIM client + chunking only
-- vectorstore/ — pgvector and FAISS wrappers only
-- tests/ — mirror src structure, mock all external calls
+| Component | Package / Version |
+|---|---|
+| Python | 3.11 |
+| Orchestration | langgraph ≥ 0.2 |
+| LLM framework | langchain-core, langchain-openai, langchain-community |
+| Embeddings | NIM embedding API (OpenAI-compat), langchain-openai |
+| Vector stores | pgvector (psycopg2-binary, pgvector), milvus (pymilvus), faiss-cpu |
+| Ingestion | pypdf2, slack-sdk, beautifulsoup4, sqlalchemy |
+| Evaluation | ragas, langsmith |
+| Observability | langfuse ≥ 2.x |
+| Config | PyYAML, python-dotenv |
+| Linting | ruff, mypy |
+| Packaging | pyproject.toml |
 
-## Testing
-- Mock all OpenAI/NIM API calls with unittest.mock
-- Mock pgvector/FAISS with in-memory fakes
-- Every node must have at least one unit test in tests/
+Never add `torch` or model training dependencies. NIM handles all inference — this repo is retrieval and orchestration only.
 
-## Do Not
-- Do not import from api/ into orchestrator/ or ingestion/
-- Do not make real API calls in tests
-- Do not commit .env — only .env.template
-- Do not use sync SQLAlchemy in async FastAPI routes
+## Coding Conventions
+
+### General
+- All functions and methods **must** have complete type hints (arguments + return type). No bare `Any` without a justifying comment.
+- All public functions, classes, and methods **must** have Google-style docstrings with `Args:`, `Returns:`, `Raises:` sections.
+- Never use `print()`. Use `import logging; logger = logging.getLogger(__name__)` throughout. Log at appropriate levels: `debug` for retrieval internals, `info` for pipeline stage transitions, `warning` for degraded states, `error` for failures.
+- Use `python-dotenv` (`from dotenv import load_dotenv`) at every entry-point module. Never hardcode connection strings, API keys, or host URLs.
+- All database connection strings must come from environment variables (`PGVECTOR_URL`, `MILVUS_URI`, `REDIS_URL`, etc.).
+- Line length: 100 characters (configured in `pyproject.toml`).
+- Imports: stdlib → third-party → local, separated by blank lines. Run `ruff --fix` before committing.
+
+### Error Handling
+- All ingestion loaders must handle file-not-found, parse errors, and network timeouts gracefully, logging the error and continuing to the next document (never crashing the full pipeline for one bad document).
+- Use `tenacity.retry` with exponential backoff on NIM embedding calls and any external API calls.
+- Custom exceptions: `IngestionError`, `EmbeddingError`, `RetrievalError` should be defined in a `core/exceptions.py` module.
+- Never swallow exceptions silently.
+
+### Async
+- Prefer `async def` for embedding, retrieval, and generation pipeline steps.
+- Ingestion loaders may be synchronous if the underlying library (e.g., pypdf2) is sync — wrap in `asyncio.to_thread` at the pipeline layer.
+
+## LangGraph Patterns
+
+### CRAG Orchestrator
+- The Corrective RAG pattern in `orchestrator/` follows: `retrieve_node → grade_documents_node → (generate_node | web_search_node → generate_node)`.
+- `grade_documents_node` uses an LLM to score document relevance and routes via a conditional edge to either `generate_node` (if relevant docs found) or `web_search_node` (if docs are insufficient).
+- The corrective loop must have a maximum iteration cap (default 3) stored in state.
+
+### State
+- All LangGraph state **must** be a `TypedDict` defined in a dedicated state file. Never use plain `dict`.
+- Canonical CRAG state shape:
+  ```python
+  from typing import Annotated, TypedDict
+  import operator
+
+  class RAGState(TypedDict):
+      question: str
+      documents: Annotated[list[Document], operator.add]
+      generation: str
+      web_search_triggered: bool
+      grade_scores: Annotated[list[float], operator.add]
+      iteration: int
+      error: str | None
+  ```
+
+### Node Naming
+- `retrieve_documents`, `grade_documents`, `generate_answer`, `web_search_fallback`, `route_generation` (conditional router).
+- Each node returns a partial state dict — only keys it modifies.
+- Compile the graph once at module level, reuse the compiled object across requests.
+
+## NIM / Embedding Patterns
+
+### NIM Embedder
+- `embeddings/nim_embedder.py` wraps `langchain_openai.OpenAIEmbeddings` pointed at the NIM embedding endpoint.
+- Read `NIM_EMBEDDING_MODEL`, `NIM_BASE_URL`, `NIM_API_KEY` from environment.
+- `NIMEmbedder` is the canonical class name. It must expose `embed_documents(texts: list[str]) -> list[list[float]]` and `embed_query(text: str) -> list[float]`.
+- Use `tenacity.retry` with `stop=stop_after_attempt(3)` on both methods.
+
+### Chunker
+- `embeddings/chunker.py` uses `langchain_text_splitters.RecursiveCharacterTextSplitter`.
+- Default chunk size: 512 tokens, overlap: 50 tokens. These must be configurable via environment variables (`CHUNK_SIZE`, `CHUNK_OVERLAP`).
+- Chunker must preserve document metadata (source, page, loader type) on output chunks.
+
+### Hybrid Retriever
+- `retriever/hybrid_retriever.py` combines dense (vector) and sparse (BM25 or keyword) retrieval.
+- Fusion scoring method must be documented in the module docstring.
+- Retriever accepts a `top_k: int` parameter (default 5).
+
+## Observability Standard
+
+**Every LLM call and every embedding call must have Langfuse tracing enabled.** This is non-negotiable across all pipeline stages.
+
+```python
+import os
+from langfuse.callback import CallbackHandler
+
+
+def get_langfuse_handler() -> CallbackHandler:
+    """Return a configured Langfuse CallbackHandler for pipeline tracing.
+
+    Reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST from environment.
+    Operates in no-op mode if keys are absent (logs a warning).
+
+    Returns:
+        CallbackHandler: Ready-to-use Langfuse handler.
+    """
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "")
+    host = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
+    if not public_key or not secret_key:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Langfuse credentials not set — tracing disabled."
+        )
+
+    return CallbackHandler(
+        public_key=public_key,
+        secret_key=secret_key,
+        host=host,
+    )
+```
+
+- Define `get_langfuse_handler()` in `pipeline/generator.py` or a shared `core/observability.py` module.
+- Apply to: `pipeline/generator.py` (every `ChatOpenAI` construction), `orchestrator/` nodes, `pipeline/embedder.py` embedding calls.
+- LangSmith tracing is also enabled via environment variables (`LANGCHAIN_TRACING_V2`, `LANGCHAIN_API_KEY`) — both systems run concurrently.
+
+## Vector Store Patterns
+
+### Backend Selection
+- The active backend is selected via `VECTORSTORE_BACKEND` env var: `pgvector`, `milvus`, or `faiss`.
+- `backends/` contains backend-specific adapters. All adapters implement a common `VectorStoreBase` ABC with `add_documents`, `similarity_search`, and `delete` methods.
+- Never import a backend directly in pipeline code. Use the factory in `vectorstore/` that reads `VECTORSTORE_BACKEND`.
+
+### pgvector
+- Use `langchain_community.vectorstores.PGVector`. Connection string from `PGVECTOR_URL`.
+- Collection name from `PGVECTOR_COLLECTION` env var.
+
+### Milvus
+- Use `langchain_community.vectorstores.Milvus`. URI from `MILVUS_URI`.
+- Collection name from `MILVUS_COLLECTION` env var.
+
+### FAISS
+- Use for local/offline development only. FAISS indexes are not persisted to a database.
+- Always log a `logger.warning("Using FAISS in-memory store — not suitable for production")` when FAISS is selected.
+
+## Ingestion Patterns
+
+- Each loader in `ingestion/` must implement a `load() -> list[Document]` method.
+- `Document` is always `langchain_core.documents.Document` — never a custom dict.
+- Loaders must log the number of documents loaded at `INFO` level upon completion.
+- PDF loader uses `pypdf2`. Slack loader uses `slack-sdk`. Web loader uses `beautifulsoup4` with `requests`. SQL loader uses `sqlalchemy`.
+
+## Architecture Documentation
+
+The `docs/architecture.md` file must document **all** top-level directories:
+
+| Directory | Purpose |
+|---|---|
+| `ingestion/` | Document loaders (PDF, Slack, web, SQL) |
+| `pipeline/` | Embedder, indexer, retriever, generator |
+| `backends/` | Vector store adapters (pgvector, Milvus) |
+| `evals/` | RAGAS + LangSmith evaluation scripts |
+| `vectorstore/` | Vector store factory and FAISS/pgvector wrappers |
+| `embeddings/` | NIM embedder and text chunker |
+| `orchestrator/` | CRAG LangGraph graph definition |
+| `retriever/` | Hybrid retriever (dense + sparse) |
+| `deploy/` | Dockerfile, docker-compose, k8s manifests |
+| `api/` | FastAPI server |
+| `tests/` | pytest test suite |
+| `notebooks/` | Exploratory notebooks |
+
+Any directory not in this table must be added to `docs/architecture.md` before the PR merges.
+
+## Docker & Deployment
+
+- `docker-compose.yml` **must** exist at the **repo root** (developer convenience) AND in `deploy/` (production).
+- The root `docker-compose.yml` uses `env_file: .env` and build context `.` with `deploy/Dockerfile`.
+- The `deploy/docker-compose.yml` is the fully parameterized production version with database services.
+- Kubernetes manifests live in `deploy/k8s/` — do not put k8s YAML at the repo root.
+
+## Evaluation Conventions
+
+- `evals/ragas_eval.py` — Run RAGAS evaluation on a dataset from `evals/datasets/`.
+- `evals/langsmith_eval.py` — Run LangSmith evaluation and upload results.
+- `evals/ragas_runner.py` — CLI runner that accepts `--dataset`, `--output-file`, `--metrics` arguments.
+- All eval scripts must accept `--help` and use `argparse`.
+- Eval output is JSON, written to a file specified by `--output-file`. Never write to stdout only.
+- Never import eval modules in the main pipeline path — evals are offline only.
+
+## File & Module Organization
+
+```
+enterprise-rag-pipeline/
+├── api/                  # FastAPI server
+├── backends/             # pgvector, milvus adapters
+├── deploy/               # Dockerfile, docker-compose (prod), k8s/
+├── docs/                 # architecture.md (must document all dirs)
+├── embeddings/           # nim_embedder.py, chunker.py
+├── evals/                # ragas_eval.py, langsmith_eval.py, ragas_runner.py, datasets/
+├── ingestion/            # pdf_loader, slack_loader, web_loader, sql_loader
+├── notebooks/            # Exploratory notebooks (not imported)
+├── orchestrator/         # CRAG LangGraph graph
+├── pipeline/             # embedder.py, indexer.py, retriever.py, generator.py
+├── retriever/            # hybrid_retriever.py
+├── tests/                # pytest suite mirroring src structure
+├── vectorstore/          # faiss_store.py, pgvector_store.py, factory
+├── .cursorrules          # This file
+├── .env.template         # Environment variable template
+├── docker-compose.yml    # Root developer convenience compose
+└── pyproject.toml
+```
+
+- `pipeline/` is the high-level orchestration layer; it imports from `embeddings/`, `ingestion/`, `vectorstore/`, `retriever/`.
+- `orchestrator/` imports from `pipeline/` only — it does not import directly from `embeddings/` or `ingestion/`.
+- No circular imports. `embeddings/` must not import from `pipeline/`.
+
+## What NOT to Do
+
+- **Do not** use `faiss` in production environments. FAISS is dev/offline only.
+- **Do not** hardcode embedding model names. Read from `NIM_EMBEDDING_MODEL` env var.
+- **Do not** store raw documents (pre-chunked) in the vector store. Always chunk first via `chunker.py`.
+- **Do not** use `langchain.embeddings` (deprecated). Use `langchain_openai.OpenAIEmbeddings`.
+- **Do not** skip Langfuse callback in `pipeline/generator.py` or any LLM-touching code.
+- **Do not** import eval modules (`ragas`, `langsmith`) in the main pipeline — evals are offline only.
+- **Do not** use `print()`. Use structured logging.
+- **Do not** put docker-compose only in `deploy/` — the root must always have a compose file.
+- **Do not** define LangGraph state as a plain `dict`. Always use `TypedDict`.
+- **Do not** use `langchain.vectorstores` (deprecated). Use `langchain_community.vectorstores`.
+- **Do not** write directly to `docs/architecture.md` — always update it when adding new top-level directories.
+
+## Test Conventions
+
+- Test runner: `pytest` with `pytest-asyncio`.
+- All async tests: `@pytest.mark.asyncio`.
+- Mock vector store calls with `unittest.mock.MagicMock` or `mocker.patch`. Never hit a live database in unit tests.
+- Mock NIM embedding API calls — never make real HTTP calls in unit tests.
+- Mock Langfuse with `mocker.patch("langfuse.callback.CallbackHandler")`.
+- Mock RAGAS in unit tests — RAGAS evals are integration tests run separately.
+- Test naming: `test_<module>_<scenario>.py`.
+- Minimum coverage: 80% for `pipeline/`, `embeddings/`, `retriever/`, `orchestrator/`.
+- Integration tests that require live databases go in `tests/integration/` with `@pytest.mark.integration`.
+
+## Cross-Repo Conventions
+
+These conventions are shared across `nvidia-nim-agent-toolkit`, `enterprise-rag-pipeline`, and `multi-agent-reference-architecture`:
+
+1. **dotenv**: Every entry point calls `load_dotenv()` before any config reads.
+2. **Linting**: `ruff check . --fix && mypy .` must pass clean before merging.
+3. **docker-compose at root**: All repos expose a root-level `docker-compose.yml` for `docker compose up`.
+4. **TypedDict state**: LangGraph state is always a `TypedDict`, never a plain dict.
+5. **Langfuse tracing**: Every LLM call includes `CallbackHandler` from `langfuse.callback`.
+6. **No legacy langchain imports**: Use `langchain_core`, `langchain_openai`, `langchain_community`.
+7. **No print() statements**: All output via `logging`.
+8. **agents.yaml / YAML config pattern**: Agent and pipeline config lives in YAML files, not hardcoded.
+9. **Google-style docstrings**: All public functions and classes document Args, Returns, Raises.
+10. **Eval isolation**: Evaluation code (`ragas`, `langsmith`) never imported in the main pipeline path.
