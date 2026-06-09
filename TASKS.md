@@ -1,8 +1,20 @@
 # TASKS — enterprise-rag-pipeline
 
-**Completion:** 90%
-**Last Audit:** 2025-01-30
+**Completion:** 100% SPECCED
+**Last Audit:** 2026-06-09
 **Repo Role:** NVIDIA SA production RAG reference implementation with CRAG orchestration, multi-backend vector stores, and RAGAS evaluation.
+**Status:** All tasks have dedicated Cursor subagents with exact file targets and acceptance criteria. Open in Cursor and run `/subagent-name` to execute autonomously.
+
+---
+
+## Cursor Subagents
+
+| Subagent | Invoke | Task | Est. Time |
+|---|---|---|---|
+| `add-langfuse-tracing.md` | `/add-langfuse-tracing` | Add Langfuse to generator + orchestrator | 30 min |
+| `fix-docker-compose.md` | `/fix-docker-compose` | Root docker-compose.yml + README update | 15 min |
+| `update-architecture-docs.md` | `/update-architecture-docs` | Document orchestrator/, embeddings/, vectorstore/ in docs/architecture.md | 10 min |
+| `run-ragas-eval.md` | `/run-ragas-eval` | Baseline RAGAS eval run + commit results JSON | 20 min |
 
 ---
 
@@ -27,18 +39,20 @@ These issues block production readiness, violate cross-repo standards, or create
 - [ ] **`tests/conftest.py`** — Add `mock_langfuse` and `mock_observability` fixtures.
   - Acceptance: All existing tests pass after Langfuse changes; no new network calls in test suite.
 
-> Use the `.cursor/agents/add-langfuse-tracing.md` agent for this task.
+> **Subagent:** `/add-langfuse-tracing`
 
 ---
 
 ### 1.2 — Add Root-Level docker-compose.yml
 
-- [ ] **`docker-compose.yml`** (create at repo root) — Developer convenience compose with `env_file: .env`, build context `.`, `deploy/Dockerfile`.
+- [ ] **`docker-compose.yml`** (create at repo root) — Developer convenience compose with `env_file: .env`, build context `.`, `deploy/Dockerfile`. Services: `api`, `vectorstore` (qdrant/pgvector), `langfuse`, `langfuse_db`.
   - Acceptance: `docker compose config` exits 0; `docker compose up` starts API on port 8000.
 - [ ] **`README.md`** — Update "Getting Started" to use `docker compose up` from root.
   - Acceptance: No instruction to `cd deploy/` in the README quick start section.
+- [ ] **`.env.template`** — Add `LANGFUSE_NEXTAUTH_SECRET`, `LANGFUSE_SALT`.
+  - Acceptance: Both keys present with comments.
 
-> Use the `.cursor/agents/fix-docker-compose.md` agent (pattern from nvidia-nim-agent-toolkit) for this task.
+> **Subagent:** `/fix-docker-compose`
 
 ---
 
@@ -57,7 +71,7 @@ These issues block production readiness, violate cross-repo standards, or create
 - [ ] **`docs/architecture.md`** — Add High-Level Data Flow diagram (ASCII or mermaid).
   - Acceptance: Data flow from document source to API response is visually represented.
 
-> Use the `.cursor/agents/update-architecture-docs.md` agent for this task.
+> **Subagent:** `/update-architecture-docs`
 
 ---
 
@@ -83,7 +97,7 @@ These issues block production readiness, violate cross-repo standards, or create
 - [ ] **`evals/results/`** (create directory) — Run a baseline RAGAS eval against the sample dataset and commit the results JSON as the baseline.
   - Acceptance: `evals/results/baseline_ragas_results.json` exists with all four metrics documented.
 
-> Use the `.cursor/agents/run-ragas-eval.md` agent for this task.
+> **Subagent:** `/run-ragas-eval`
 
 ### 2.5 — Chunker Configurable via Environment
 
