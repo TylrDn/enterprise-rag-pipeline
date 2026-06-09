@@ -12,7 +12,9 @@ class SlackLoader:
     """Load Slack export JSON files into LangChain Documents."""
 
     def __init__(self, chunk_size: int = 512, chunk_overlap: int = 64) -> None:
-        self.splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        self.splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
 
     def load_file(self, path: str | Path) -> list[Document]:
         path = Path(path)

@@ -8,13 +8,12 @@ import pytest
 from langchain_core.documents import Document
 
 from pipeline.generator import (
-    Generator,
+    _NO_CONTEXT_REPLY,
     GenerationResult,
+    Generator,
     _format_context,
     _parse_grounded_flag,
-    _NO_CONTEXT_REPLY,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -22,7 +21,7 @@ from pipeline.generator import (
 
 DOCS = [
     Document(page_content="NVIDIA NIM accelerates inference.", metadata={"source": "nim.pdf"}),
-    Document(page_content="pgvector enables vector search in Postgres.", metadata={"source": "pg.pdf"}),
+    Document(page_content="pgvector enables vector search in Postgres.", metadata={"source": "pg.pdf"}),  # noqa: E501
 ]
 
 

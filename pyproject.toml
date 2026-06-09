@@ -1,11 +1,47 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "enterprise-rag-pipeline"
 version = "0.1.0"
-python_requires = ">=3.11"
+description = "Production-grade multi-source RAG pipeline on NVIDIA NIM with CRAG orchestration."
+requires-python = ">=3.11"
+
+[tool.setuptools]
+py-modules = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "integration: tests that require live services (pgvector, NIM); excluded by default",
+]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+
+[tool.coverage.run]
+source = [
+    "api",
+    "backends",
+    "core",
+    "embeddings",
+    "ingestion",
+    "orchestrator",
+    "pipeline",
+    "retriever",
+    "vectorstore",
+]
+omit = ["tests/*", "evals/*", "*/__init__.py"]
+
+[tool.coverage.report]
+show_missing = true

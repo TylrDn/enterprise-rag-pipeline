@@ -1,8 +1,6 @@
 """Web scraper using httpx + BeautifulSoup with recursive site crawling."""
 from __future__ import annotations
 
-from urllib.parse import urljoin, urlparse
-
 import httpx
 from bs4 import BeautifulSoup
 from langchain_core.documents import Document
@@ -13,7 +11,9 @@ class WebLoader:
     """Scrape one or more URLs into LangChain Documents."""
 
     def __init__(self, chunk_size: int = 512, chunk_overlap: int = 64, max_depth: int = 1) -> None:
-        self.splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        self.splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
         self.max_depth = max_depth
         self._visited: set[str] = set()
 

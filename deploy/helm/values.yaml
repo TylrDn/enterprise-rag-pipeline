@@ -1,0 +1,40 @@
+replicaCount: 2
+
+image:
+  repository: tylrdn/enterprise-rag-pipeline
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+env:
+  vectorstoreBackend: pgvector
+  nimBaseUrl: https://integrate.api.nvidia.com/v1
+  pgvectorUrl: postgresql+psycopg://rag:rag@postgres:5432/ragdb
+  pgvectorCollection: rag_docs
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+livenessProbe:
+  path: /health
+  initialDelaySeconds: 15
+  periodSeconds: 20
+
+readinessProbe:
+  path: /health
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+secrets:
+  name: rag-secrets
+
+namespace: rag

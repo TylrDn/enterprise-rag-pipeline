@@ -1,14 +1,17 @@
 """Document chunking strategies."""
-from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
-from langchain_core.documents import Document
-from typing import List
 import os
+from typing import List
+
 from dotenv import load_dotenv
+from langchain_core.documents import Document
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 load_dotenv()
 
 
-def recursive_chunk(docs: List[Document], chunk_size: int = None, chunk_overlap: int = None) -> List[Document]:
+def recursive_chunk(
+    docs: List[Document], chunk_size: int | None = None, chunk_overlap: int | None = None
+) -> List[Document]:
     size = chunk_size or int(os.getenv("CHUNK_SIZE", "512"))
     overlap = chunk_overlap or int(os.getenv("CHUNK_OVERLAP", "64"))
     splitter = RecursiveCharacterTextSplitter(

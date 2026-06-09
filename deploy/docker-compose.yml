@@ -7,19 +7,19 @@ services:
       dockerfile: deploy/Dockerfile
     image: enterprise-rag-pipeline:latest
     container_name: rag-api
+    env_file: ../.env
     ports:
-      - "8081:8081"
+      - "8000:8000"
     environment:
-      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - NIM_BASE_URL=${NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
-      - VECTOR_BACKEND=${VECTOR_BACKEND:-pgvector}
-      - PGVECTOR_CONNECTION=postgresql+psycopg://rag:rag@postgres:5432/ragdb
-      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - VECTORSTORE_BACKEND=${VECTORSTORE_BACKEND:-pgvector}
+      - PGVECTOR_URL=postgresql+psycopg://rag:rag@postgres:5432/ragdb
+      - PGVECTOR_COLLECTION=${PGVECTOR_COLLECTION:-rag_docs}
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3

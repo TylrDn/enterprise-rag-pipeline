@@ -1,0 +1,6 @@
+apiVersion: v2
+name: enterprise-rag-pipeline
+description: Helm chart for the enterprise RAG pipeline API
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

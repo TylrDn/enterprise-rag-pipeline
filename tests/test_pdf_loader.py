@@ -1,11 +1,7 @@
 """Tests for PDF loader."""
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 @patch("ingestion.pdf_loader.fitz.open")

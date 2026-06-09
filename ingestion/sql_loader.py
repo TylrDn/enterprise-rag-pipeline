@@ -35,7 +35,11 @@ class SQLLoader:
                 if len(batch) >= self.rows_per_chunk:
                     docs.append(Document(
                         page_content="\n".join(batch),
-                        metadata={"source": f"sql:{table_name}", "chunk": chunk_idx, "schema": schema},
+                        metadata={
+                            "source": f"sql:{table_name}",
+                            "chunk": chunk_idx,
+                            "schema": schema,
+                        },
                     ))
                     batch = []
                     chunk_idx += 1

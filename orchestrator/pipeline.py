@@ -10,11 +10,12 @@ from typing import List, Optional
 
 from langchain_core.documents import Document
 
-from backends.pgvector_backend import PgVectorBackend
 from pipeline.embedder import get_embedder
 from pipeline.generator import GenerationResult, Generator
-from pipeline.indexer import IndexResult, Indexer
+from pipeline.indexer import Indexer, IndexResult
 from pipeline.retriever import HybridRetriever
+from vectorstore.base import VectorStoreBase
+from vectorstore.factory import get_vector_store
 
 
 class RAGPipeline:
@@ -30,12 +31,12 @@ class RAGPipeline:
     def __init__(
         self,
         embedder=None,
-        backend: Optional[PgVectorBackend] = None,
+        backend: Optional[VectorStoreBase] = None,
         indexer: Optional[Indexer] = None,
         generator: Optional[Generator] = None,
     ) -> None:
         self.embedder = embedder or get_embedder()
-        self.backend = backend or PgVectorBackend(embedder=self.embedder)
+        self.backend = backend or get_vector_store(self.embedder.as_langchain())
         self.indexer = indexer or Indexer(backend=self.backend)
         self.generator = generator or Generator()
         self._corpus: List[Document] = []
@@ -56,6 +57,30 @@ class RAGPipeline:
         )
         docs = retriever.retrieve(question)
         return self.generator.generate(question=question, documents=docs)
+
+    def answer_with_contexts(
+        self, question: str, top_k: Optional[int] = None
+    ) -> dict:
+        """Retrieve + generate, returning answer and the retrieved context texts.
+
+        Used by the eval harnesses (RAGAS needs the raw contexts, not just the
+        source names that :class:`GenerationResult` exposes).
+
+        Returns:
+            dict: ``{"answer": str, "contexts": list[str], "sources": list[str]}``.
+        """
+        retriever = HybridRetriever(
+            vector_store=self.backend,
+            corpus_documents=self._corpus,
+            top_k=top_k,
+        )
+        docs = retriever.retrieve(question)
+        result = self.generator.generate(question=question, documents=docs)
+        return {
+            "answer": result.answer,
+            "contexts": [d.page_content for d in docs],
+            "sources": result.sources,
+        }
 
     def stream(self, question: str):
         """Stream answer tokens for a question."""

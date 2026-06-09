@@ -5,24 +5,23 @@ All BM25, vector store, and cross-encoder calls are mocked.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.documents import Document
 
 from pipeline.retriever import HybridRetriever
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 CORPUS = [
-    Document(page_content="NVIDIA NIM provides optimised inference endpoints.", metadata={"source": "a.pdf"}),
-    Document(page_content="pgvector stores dense embeddings in PostgreSQL.", metadata={"source": "b.pdf"}),
-    Document(page_content="LangChain supports EnsembleRetriever for hybrid search.", metadata={"source": "c.pdf"}),
-    Document(page_content="Cross-encoder models rerank candidate documents.", metadata={"source": "d.pdf"}),
-    Document(page_content="RAG pipelines combine retrieval and generation.", metadata={"source": "e.pdf"}),
+    Document(page_content="NVIDIA NIM provides optimised inference endpoints.", metadata={"source": "a.pdf"}),  # noqa: E501
+    Document(page_content="pgvector stores dense embeddings in PostgreSQL.", metadata={"source": "b.pdf"}),  # noqa: E501
+    Document(page_content="LangChain supports EnsembleRetriever for hybrid search.", metadata={"source": "c.pdf"}),  # noqa: E501
+    Document(page_content="Cross-encoder models rerank candidate documents.", metadata={"source": "d.pdf"}),  # noqa: E501
+    Document(page_content="RAG pipelines combine retrieval and generation.", metadata={"source": "e.pdf"}),  # noqa: E501
 ]
 
 RETURNED_DOCS = [

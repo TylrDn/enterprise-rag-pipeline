@@ -12,3 +12,7 @@ build/
 chroma_db/
 *.faiss
 *.pkl
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

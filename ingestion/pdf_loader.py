@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Iterator
 
 import fitz  # PyMuPDF
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 
 DEFAULT_CHUNK_SIZE = 512
 DEFAULT_CHUNK_OVERLAP = 64
@@ -17,7 +15,11 @@ DEFAULT_CHUNK_OVERLAP = 64
 class PDFLoader:
     """Load and chunk PDFs into LangChain Documents."""
 
-    def __init__(self, chunk_size: int = DEFAULT_CHUNK_SIZE, chunk_overlap: int = DEFAULT_CHUNK_OVERLAP) -> None:
+    def __init__(
+        self,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    ) -> None:
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,

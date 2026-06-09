@@ -1,15 +1,47 @@
-"""RAG agent state definition."""
-from typing import TypedDict, List, Optional
+"""Corrective RAG (CRAG) graph state.
+
+Canonical shape per the cross-repo LangGraph convention: append-only fields use
+``Annotated[list, operator.add]`` so nodes return only the keys they change.
+"""
+from __future__ import annotations
+
+import operator
+from typing import Annotated, TypedDict
+
 from langchain_core.documents import Document
 
 
 class RAGState(TypedDict):
-    question: str                        # original user question
-    rewritten_query: str                 # query after rewriting
-    documents: List[Document]            # retrieved documents
-    graded_documents: List[Document]     # documents passing relevance grade
-    generation: str                      # LLM generated answer
-    hallucination_score: float           # faithfulness score
-    answer_grade: str                    # "supported" | "unsupported" | "not_useful"
-    retry_count: int                     # number of retries
-    source_types: List[str]              # which sources were used
+    """State threaded through the CRAG graph."""
+
+    question: str
+    documents: Annotated[list[Document], operator.add]
+    graded_documents: list[Document]
+    generation: str
+    web_search_triggered: bool
+    grade_scores: Annotated[list[float], operator.add]
+    iteration: int
+    error: str | None
+    source_types: list[str]
+
+
+def initial_state(question: str) -> RAGState:
+    """Return a fresh state for a new question.
+
+    Args:
+        question: The user's question.
+
+    Returns:
+        RAGState: A zero-initialized state ready for graph invocation.
+    """
+    return {
+        "question": question,
+        "documents": [],
+        "graded_documents": [],
+        "generation": "",
+        "web_search_triggered": False,
+        "grade_scores": [],
+        "iteration": 0,
+        "error": None,
+        "source_types": [],
+    }

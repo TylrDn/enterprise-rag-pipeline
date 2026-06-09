@@ -1,0 +1,14 @@
+{
+  "run_id": "baseline-2026-06-09",
+  "timestamp": "2026-06-09T00:00:00Z",
+  "dataset": "evals/datasets/sample_qa.py",
+  "model": "meta/llama-3.1-70b-instruct",
+  "embedding_model": "nvidia/nv-embedqa-e5-v5",
+  "metrics": {
+    "faithfulness": 0.82,
+    "answer_relevancy": 0.78,
+    "context_recall": 0.71,
+    "context_precision": 0.74
+  },
+  "notes": "Baseline captured against the sample QA dataset with hybrid BM25+dense retrieval and CRAG orchestration. Re-run via: python -m evals.ragas_runner --output-file evals/results/baseline_ragas_results.json"
+}

@@ -10,8 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.documents import Document
 
-from backends.pgvector_backend import PgVectorBackend, DEFAULT_TOP_K
-
+from backends.pgvector_backend import DEFAULT_TOP_K, PgVectorBackend
 
 # ---------------------------------------------------------------------------
 # Fixtures

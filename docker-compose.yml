@@ -64,15 +64,17 @@ services:
       context: .
       dockerfile: deploy/Dockerfile
     container_name: rag-pipeline
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "8000:8000"
     environment:
-      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - VECTORSTORE_BACKEND=${VECTORSTORE_BACKEND:-pgvector}
       - NIM_BASE_URL=${NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
-      - PGVECTOR_URL=postgresql://raguser:${POSTGRES_PASSWORD:-ragpassword}@pgvector:5432/ragdb
-      - MILVUS_HOST=milvus
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - PGVECTOR_URL=postgresql+psycopg://raguser:${POSTGRES_PASSWORD:-ragpassword}@pgvector:5432/ragdb
+      - PGVECTOR_COLLECTION=${PGVECTOR_COLLECTION:-rag_docs}
+      - MILVUS_URI=http://milvus:19530
     depends_on:
       pgvector:
         condition: service_healthy
